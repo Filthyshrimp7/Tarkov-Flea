@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flea Watch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: search bar on top, watchlist as a dense table below; data from json.tarkov.dev */
+:root{
+  --bg:#14130f; --panel:#1c1b16; --line:#2e2c24; --fg:#e6e1d3; --muted:#8f8a7a;
+  --accent:#c9a54a; --up:#6fbf73; --down:#d9644f;
+  --display:"Barlow Condensed",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 var(--body);
+  padding:24px max(16px,env(safe-area-inset-right,0px)) 48px max(16px,env(safe-area-inset-left,0px))}
+.wrap{max-width:1100px;margin:0 auto;display:grid;gap:20px}
+header{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:12px}
+h1{font:700 2rem/1 var(--display);letter-spacing:.04em;text-transform:uppercase;margin:0}
+h1 span{color:var(--accent)}
+.meta{font:12px var(--mono);color:var(--muted)}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+button,select,input{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:7px 10px}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.search{position:relative}
+.search input{width:100%;padding:10px 12px;font-size:15px}
+.results{position:absolute;z-index:5;left:0;right:0;top:calc(100% + 4px);background:var(--panel);border:1px solid var(--line);border-radius:4px;max-height:360px;overflow:auto}
+.results button{display:flex;width:100%;gap:10px;align-items:center;border:0;border-bottom:1px solid var(--line);border-radius:0;text-align:left;padding:6px 10px}
+.results button:hover{background:#25231c}
+.results img,td img{width:32px;height:32px;object-fit:contain;background:#0e0d0a;border-radius:2px;flex:none}
+.results .p{margin-left:auto;font-family:var(--mono);color:var(--muted)}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:4px}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);text-align:right;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer;user-select:none}
+th:first-child,td:first-child{text-align:left}
+td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:right;font-family:var(--mono);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.name{display:flex;gap:10px;align-items:center;font-family:var(--body)}
+.name a{color:var(--fg);text-decoration:none}
+.name a:hover{color:var(--accent)}
+.name small{display:block;color:var(--muted);font:11px var(--mono)}
+.up{color:var(--up)} .down{color:var(--down)} .dim{color:var(--muted)}
+.tag{font:11px var(--mono);padding:1px 6px;border-radius:3px;border:1px solid var(--line)}
+.tag.flea{color:var(--up);border-color:var(--up)} .tag.trader{color:var(--accent);border-color:var(--accent)}
+.rm{padding:2px 8px;color:var(--muted)}
+.empty{padding:32px;text-align:center;color:var(--muted)}
+.err{color:var(--down);font:12px var(--mono)}
+footer{font:12px var(--mono);color:var(--muted)}
+footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Flea <span>Watch</span></h1>
+      <div class="meta" id="status">Loading…</div>
+    </div>
+    <div class="controls">
+      <label class="meta" for="mode">Mode</label>
+      <select id="mode"><option value="regular">PvP</option><option value="pve">PvE</option></select>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <div class="search">
+    <input id="q" type="search" placeholder="Search an item to add (e.g. LEDX, GPU, Moonshine)…" autocomplete="off">
+    <div class="results" id="results" hidden></div>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th data-k="name">Item</th>
+        <th data-k="avg">Avg 24h</th>
+        <th data-k="low">Lowest now</th>
+        <th data-k="chg">48u</th>
+        <th data-k="slot">Per slot</th>
+        <th data-k="trader">Best trader</th>
+        <th data-k="best">Sell on</th>
+        <th></th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div class="err" id="err"></div>
+  <footer>Price data: <a href="https://tarkov.dev" target="_blank" rel="noopener">tarkov.dev</a> (json.tarkov.dev). Your watchlist is saved in your own browser. Auto-refreshes every 5 min.</footer>
+</div>
+
+<script>
+// api.tarkov.dev (GraphQL) has been down since July 2026; json.tarkov.dev is what tarkov.dev itself runs on
+const JSON_BASE = "https://json.tarkov.dev";
+const DEFAULT = ["5c0530ee86f774697952d952","57347ca924597744596b4e71","59faff1d86f7746c51718c9c","5c94bbff86f7747ee735c08f"]; // LEDX, GPU, Bitcoin, Labs keycard
+
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d){ try{ return JSON.parse(localStorage.getItem(k)) ?? d }catch{ return d } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch{} }
+};
+let watch = store.get("fw.watch", DEFAULT);
+let mode = store.get("fw.mode", "regular");
+let sort = store.get("fw.sort", {k:"avg", dir:-1});
+let items = [];
+$("#mode").value = mode;
+
+const rub = n => n == null || n === 0 ? "—" : "₽ " + Math.round(n).toLocaleString("en-US");
+
+async function getJSON(path){
+  const r = await fetch(`${JSON_BASE}/${path}`, {cache:"no-cache"});
+  if(!r.ok) throw new Error(`Could not load data (${path}: ${r.status})`);
+  const j = await r.json();
+  if(!j.data) throw new Error("Unexpected response from json.tarkov.dev");
+  return j.data;
+}
+
+// All items for one mode, with English item names and trader names filled in
+let db = {mode:null, items:[], byId:{}};
+async function fetchAll(){
+  const [items, en, tr] = await Promise.all([getJSON(`${mode}/items`), getJSON(`${mode}/items_en`), getJSON(`${mode}/traders_en`)]);
+  const list = Object.values(items.items).map(it => ({...it,
+    name: en[`${it.id} Name`] || it.normalizedName,
+    shortName: en[`${it.id} ShortName`] || "",
+    sellToTrader: (it.sellToTrader||[]).map(s => ({...s, traderName: tr[`${s.trader} Nickname`] || "Trader"}))}));
+  db = {mode, items:list, byId:Object.fromEntries(list.map(it => [it.id, it]))};
+}
+
+function derive(it){
+  const bestTrader = [...it.sellToTrader].sort((a,b) => b.priceRUB - a.priceRUB)[0];
+  const flea = it.avg24hPrice || it.lastLowPrice || 0;
+  const slots = (it.width||1)*(it.height||1);
+  return {...it,
+    avg: it.avg24hPrice || 0, low: it.lastLowPrice || 0, chg: it.changeLast48hPercent ?? 0,
+    slot: flea / slots, slots,
+    trader: bestTrader?.priceRUB || 0, traderName: bestTrader?.traderName || "",
+    best: !flea && !bestTrader ? "none" : flea > (bestTrader?.priceRUB||0) ? "flea" : "trader"};
+}
+
+async function load(){
+  $("#err").textContent = "";
+  $("#status").textContent = "Loading prices…";
+  try{
+    await fetchAll();
+    items = watch.map(id => db.byId[id]).filter(Boolean).map(derive);
+    render();
+    const scans = items.map(it => it.lastScan).filter(Boolean).sort();
+    const scan = scans.length ? new Date(scans[scans.length-1]).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}) : "—";
+    $("#status").textContent = `${items.length} items · ${mode === "pve" ? "PvE" : "PvP"} · last flea scan ${scan}`;
+  }catch(e){
+    $("#status").textContent = "Loading failed";
+    $("#err").textContent = e.message + ". Try Refresh in a minute.";
+  }
+}
+
+function render(){
+  const {k, dir} = sort;
+  const list = [...items].sort((a,b) => k === "name" ? dir*a.name.localeCompare(b.name) : dir*((a[k]||0)-(b[k]||0)));
+  document.querySelectorAll("th[data-k]").forEach(th => {
+    th.textContent = th.textContent.replace(/ [▲▼]$/, "") + (th.dataset.k === k ? (dir > 0 ? " ▲" : " ▼") : "");
+  });
+  if(!list.length){ $("#rows").innerHTML = `<tr><td colspan="8" class="empty">Your watchlist is empty. Search for an item above.</td></tr>`; return; }
+  $("#rows").innerHTML = list.map(it => `
+    <tr>
+      <td><div class="name"><img src="${it.iconLink}" alt="" loading="lazy">
+        <div><a href="${it.link}" target="_blank" rel="noopener">${esc(it.name)}</a><small>${esc(it.shortName)} · ${it.slots} slot${it.slots>1?"s":""}</small></div></div></td>
+      <td>${rub(it.avg)}</td>
+      <td>${rub(it.low)}</td>
+      <td class="${it.chg>0?"up":it.chg<0?"down":"dim"}">${it.chg>0?"+":""}${it.chg.toFixed(1)}%</td>
+      <td class="dim">${rub(it.slot)}</td>
+      <td>${rub(it.trader)}<br><span class="dim" style="font-size:11px">${esc(it.traderName)}</span></td>
+      <td>${it.best === "none" ? `<span class="dim">—</span>` : `<span class="tag ${it.best}">${it.best === "flea" ? "Flea" : "Trader"}</span>`}</td>
+      <td><button class="rm" type="button" data-id="${it.id}" aria-label="Remove ${esc(it.name)}">×</button></td>
+    </tr>`).join("");
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+let t;
+$("#q").addEventListener("input", e => {
+  clearTimeout(t);
+  const q = e.target.value.trim();
+  if(q.length < 2){ $("#results").hidden = true; return; }
+  t = setTimeout(async () => {
+    try{
+      if(db.mode !== mode) await fetchAll();
+      const ql = q.toLowerCase();
+      const hits = db.items.filter(it => it.name.toLowerCase().includes(ql) || it.shortName.toLowerCase().includes(ql))
+        .sort((a,b) => (b.avg24hPrice||0) - (a.avg24hPrice||0)).slice(0, 15);
+      $("#results").innerHTML = hits.length ? hits.map(it => `
+        <button type="button" data-id="${it.id}"><img src="${it.iconLink}" alt=""><span>${esc(it.name)}</span><span class="p">${rub(it.avg24hPrice)}</span></button>`).join("")
+        : `<div class="empty">No items found</div>`;
+      $("#results").hidden = false;
+    }catch(err){ $("#err").textContent = err.message; }
+  }, 300);
+});
+$("#results").addEventListener("click", e => {
+  const b = e.target.closest("button[data-id]"); if(!b) return;
+  if(!watch.includes(b.dataset.id)){ watch.push(b.dataset.id); store.set("fw.watch", watch); }
+  $("#results").hidden = true; $("#q").value = ""; load();
+});
+document.addEventListener("click", e => { if(!e.target.closest(".search")) $("#results").hidden = true; });
+$("#rows").addEventListener("click", e => {
+  const b = e.target.closest(".rm"); if(!b) return;
+  watch = watch.filter(id => id !== b.dataset.id); store.set("fw.watch", watch);
+  items = items.filter(it => it.id !== b.dataset.id); render();
+});
+document.querySelectorAll("th[data-k]").forEach(th => th.addEventListener("click", () => {
+  sort = {k: th.dataset.k, dir: sort.k === th.dataset.k ? -sort.dir : (th.dataset.k === "name" ? 1 : -1)};
+  store.set("fw.sort", sort); render();
+}));
+$("#mode").addEventListener("change", e => { mode = e.target.value; store.set("fw.mode", mode); load(); });
+$("#refresh").addEventListener("click", load);
+setInterval(load, 5*60*1000);
+load();
+</script>
+</body>
+</html>
