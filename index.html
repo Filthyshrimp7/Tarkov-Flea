@@ -52,6 +52,17 @@ tr:last-child td{border-bottom:0}
 .rm{padding:2px 8px;color:var(--muted)}
 .empty{padding:32px;text-align:center;color:var(--muted)}
 .err{color:var(--down);font:12px var(--mono)}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-top:-8px}
+.tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;font:700 1.05rem/1 var(--display);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:8px 12px}
+.tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent)}
+.view{display:grid;gap:12px}
+.view[hidden]{display:none}
+.ac{display:inline-block;min-width:30px;text-align:center;padding:1px 0;border-radius:3px;font-size:12px}
+.ac.s{background:rgba(111,191,115,.28);color:#a9e3ac}
+.ac.o{background:rgba(111,191,115,.12);color:var(--up)}
+.ac.w{background:rgba(201,165,74,.14);color:var(--accent)}
+.ac.n{color:#5a5649}
+.legend{font:12px var(--mono);color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
 footer{font:12px var(--mono);color:var(--muted)}
 footer a{color:var(--muted)}
 </style>
@@ -70,6 +81,12 @@ footer a{color:var(--muted)}
     </div>
   </header>
 
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" data-view="prices" aria-selected="true">Prices</button>
+    <button type="button" role="tab" data-view="ammo" aria-selected="false">Ammo</button>
+  </nav>
+
+  <section class="view" id="view-prices">
   <div class="search">
     <input id="q" type="search" placeholder="Search an item to add (e.g. LEDX, GPU, Moonshine)…" autocomplete="off">
     <div class="results" id="results" hidden></div>
@@ -90,8 +107,32 @@ footer a{color:var(--muted)}
       <tbody id="rows"></tbody>
     </table>
   </div>
+  </section>
+
+  <section class="view" id="view-ammo" hidden>
+  <div class="search">
+    <input id="aq" type="search" placeholder="Type an ammo name or caliber (e.g. M855A1, BS, 7.62x39, 12x70)…" autocomplete="off">
+  </div>
+  <div class="legend">
+    <span>Pen vs armor class (class × 10):</span>
+    <span><span class="ac s">++</span> pen ≥ +10 over</span>
+    <span><span class="ac o">+</span> pen ≥ class</span>
+    <span><span class="ac w">~</span> up to 10 under, needs several hits</span>
+    <span><span class="ac n">–</span> won't get through</span>
+  </div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th>Ammo</th><th>Dmg</th><th>Pen</th><th>Armor dmg</th><th>Frag</th><th>Speed</th>
+        <th>C1</th><th>C2</th><th>C3</th><th>C4</th><th>C5</th><th>C6</th><th>Flea</th>
+      </tr></thead>
+      <tbody id="ammo"></tbody>
+    </table>
+  </div>
+  </section>
+
   <div class="err" id="err"></div>
-  <footer>Price data: <a href="https://tarkov.dev" target="_blank" rel="noopener">tarkov.dev</a> (json.tarkov.dev). Your watchlist is saved in your own browser. Auto-refreshes every 5 min.</footer>
+  <footer>Price and ammo data: <a href="https://tarkov.dev" target="_blank" rel="noopener">tarkov.dev</a> (json.tarkov.dev). Armor class columns are a rule of thumb against fresh armor, not an exact simulation. Your watchlist is saved in your own browser. Auto-refreshes every 5 min.</footer>
 </div>
 
 <script>
@@ -149,6 +190,7 @@ async function load(){
     await fetchAll();
     items = watch.map(id => db.byId[id]).filter(Boolean).map(derive);
     render();
+    renderAmmo();
     const scans = items.map(it => it.lastScan).filter(Boolean).sort();
     const scan = scans.length ? new Date(scans[scans.length-1]).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"}) : "—";
     $("#status").textContent = `${items.length} items · ${mode === "pve" ? "PvE" : "PvP"} · last flea scan ${scan}`;
@@ -179,6 +221,53 @@ function render(){
     </tr>`).join("");
 }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// Ammo chart: stats come from the same items feed (properties of type ItemPropertiesAmmo)
+const caliber = c => (c || "").replace(/^Caliber/, "");
+function classCell(pen, c){
+  const d = pen - c*10;
+  const [k, label] = d >= 10 ? ["s","++"] : d >= 0 ? ["o","+"] : d >= -10 ? ["w","~"] : ["n","–"];
+  return `<td><span class="ac ${k}" title="Pen ${pen} vs class ${c} (${c*10})">${label}</span></td>`;
+}
+function renderAmmo(){
+  const ql = $("#aq").value.trim().toLowerCase();
+  if(ql.length < 2){ $("#ammo").innerHTML = `<tr><td colspan="13" class="empty">Type at least 2 characters to look up ammo.</td></tr>`; return; }
+  const hits = db.items.filter(it => it.properties?.propertiesType === "ItemPropertiesAmmo")
+    .filter(it => [it.name, it.shortName, caliber(it.properties.caliber)].some(s => s.toLowerCase().includes(ql)))
+    .sort((a,b) => b.properties.penetrationPower - a.properties.penetrationPower).slice(0, 40);
+  if(!hits.length){ $("#ammo").innerHTML = `<tr><td colspan="13" class="empty">No ammo found</td></tr>`; return; }
+  $("#ammo").innerHTML = hits.map(it => {
+    const p = it.properties;
+    return `
+    <tr>
+      <td><div class="name"><img src="${it.iconLink}" alt="" loading="lazy">
+        <div><a href="${it.link}" target="_blank" rel="noopener">${esc(it.name)}</a><small>${esc(it.shortName)} · ${esc(caliber(p.caliber))}</small></div></div></td>
+      <td>${p.damage}${p.projectileCount > 1 ? `<span class="dim"> ×${p.projectileCount}</span>` : ""}</td>
+      <td><b>${p.penetrationPower}</b></td>
+      <td>${p.armorDamage}%</td>
+      <td class="dim">${Math.round(p.fragmentationChance*100)}%</td>
+      <td class="dim">${p.initialSpeed} m/s</td>
+      ${[1,2,3,4,5,6].map(c => classCell(p.penetrationPower, c)).join("")}
+      <td>${rub(it.avg24hPrice || it.lastLowPrice)}</td>
+    </tr>`}).join("");
+}
+let at;
+$("#aq").addEventListener("input", () => {
+  clearTimeout(at);
+  at = setTimeout(async () => {
+    try{ if(db.mode !== mode) await fetchAll(); renderAmmo(); }
+    catch(err){ $("#err").textContent = err.message; }
+  }, 200);
+});
+
+function showView(v){
+  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.view === v));
+  $("#view-prices").hidden = v !== "prices";
+  $("#view-ammo").hidden = v !== "ammo";
+  store.set("fw.view", v);
+}
+document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => showView(b.dataset.view)));
+showView(store.get("fw.view", "prices"));
 
 let t;
 $("#q").addEventListener("input", e => {
